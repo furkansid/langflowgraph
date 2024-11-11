@@ -56,6 +56,8 @@ class RunnableVerticesManager:
         if vertex_id not in self.vertices_to_run:
             return False
         if not self.are_all_predecessors_fulfilled(vertex_id):
+            # change for @langgraph CUSTOM_CHANGES_OCT24
+            # return True
             return False
         return True
 

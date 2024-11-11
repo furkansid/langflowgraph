@@ -20,6 +20,7 @@ class ArtifactType(str, Enum):
 
 
 def get_artifact_type(value, build_result=None) -> str:
+
     result = ArtifactType.UNKNOWN
     match value:
         case Message():
@@ -31,6 +32,10 @@ def get_artifact_type(value, build_result=None) -> str:
         case Data():
             enum_value = get_artifact_type(value.data)
             result = ArtifactType(enum_value)
+
+        # case State():
+        #     enum_value = get_artifact_type(value.message)
+        #     result = ArtifactType(enum_value)
 
         case str():
             result = ArtifactType.TEXT
@@ -51,6 +56,7 @@ def get_artifact_type(value, build_result=None) -> str:
 
 
 def post_process_raw(raw, artifact_type: str):
+
     if artifact_type == ArtifactType.STREAM.value:
         raw = ""
     elif artifact_type == ArtifactType.ARRAY.value:
@@ -72,4 +78,7 @@ def post_process_raw(raw, artifact_type: str):
                 raw = "Built Successfully ✨"
         else:
             raw = "Built Successfully ✨"
+    # elif artifact_type == ArtifactType.OBJECT and 'message' in raw and 'State' in raw['types']:
+    #     message = raw.pop('message')
+    #     raw = {**message}
     return raw, artifact_type

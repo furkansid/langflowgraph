@@ -59,6 +59,10 @@ class HandleInput(BaseInputMixin, ListableInputMixin, MetadataTraceMixin):
     field_type: SerializableFieldTypes = FieldTypes.OTHER
 
 
+class StateInput(HandleInput):
+    input_types: list[str] = ["State"]
+
+
 class DataInput(HandleInput, InputTraceMixin, ListableInputMixin):
     """
     Represents an Input that has a Handle that receives a Data object.
@@ -503,6 +507,7 @@ InputTypes = Union[
     MessageTextInput,
     MessageInput,
     TableInput,
+    StateInput
 ]
 
 InputTypesMap: dict[str, type[InputTypes]] = {t.__name__: t for t in get_args(InputTypes)}

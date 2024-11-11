@@ -213,3 +213,9 @@ class Data(BaseModel):
 
     def __eq__(self, other):
         return isinstance(other, Data) and self.data == other.data
+
+
+
+
+class State(Data):
+    pass

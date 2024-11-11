@@ -475,6 +475,7 @@ async def abuild_custom_components(components_paths: list[str]):
     logger.info(f"Building custom components from {components_paths}")
     custom_components_from_file: dict = {}
     processed_paths = set()
+    print("Flag components_paths", components_paths)
     for path in components_paths:
         path_str = str(path)
         if path_str in processed_paths:

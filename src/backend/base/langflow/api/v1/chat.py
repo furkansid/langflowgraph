@@ -178,6 +178,7 @@ async def build_flow(
             # Now vertices is a list of lists
             # We need to get the id of each vertex
             # and return the same structure but only with the ids
+            # from celery.contrib import rdb; rdb.set_trace()
             components_count = len(graph.vertices)
             vertices_to_run = list(graph.vertices_to_run.union(get_top_level_vertices(graph, graph.vertices_to_run)))
             background_tasks.add_task(
@@ -225,6 +226,7 @@ async def build_flow(
                     set_cache=chat_service.set_cache,
                     event_manager=event_manager,
                 )
+
                 result_dict = vertex_build_result.result_dict
                 params = vertex_build_result.params
                 valid = vertex_build_result.valid

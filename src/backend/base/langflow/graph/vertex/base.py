@@ -463,6 +463,8 @@ class Vertex:
         if self.base_type is None:
             raise ValueError(f"Base type for vertex {self.display_name} not found")
 
+        # from celery.contrib import rdb;
+        # rdb.set_trace()
         if not self._custom_component:
             custom_component, custom_params = await initialize.loading.instantiate_class(
                 user_id=user_id, vertex=self, event_manager=event_manager
@@ -472,6 +474,9 @@ class Vertex:
             self._custom_component.set_event_manager(event_manager)
             custom_params = initialize.loading.get_params(self.params)
 
+
+        # from celery.contrib import rdb;
+        # rdb.set_trace()
         await self._build_results(
             custom_component=custom_component,
             custom_params=custom_params,

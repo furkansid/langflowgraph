@@ -1,13 +1,15 @@
 from langflow.base.io.text import TextComponent
+from langflow.custom import Component
 from langflow.io import MultilineInput, Output
 from langflow.schema.message import Message
+from langflow.schema import Data
 
 
-class TextInputComponent(TextComponent):
-    display_name = "Text Input"
-    description = "Get text inputs from the Playground."
+class Whatsapp(Component):
+    display_name = "Whatsapp"
+    description = "Integrate Whatsapp channel ok"
     icon = "type"
-    name = "TextInput"
+    name = "WhatsAppInput"
 
     inputs = [
         MultilineInput(
@@ -17,7 +19,7 @@ class TextInputComponent(TextComponent):
         ),
     ]
     outputs = [
-        Output(display_name="Text", name="text", method="text_response"),
+        Output(display_name="Text", name="text", method="build_output"),
     ]
 
     def text_response(self) -> Message:
@@ -25,6 +27,8 @@ class TextInputComponent(TextComponent):
             text=self.input_value,
         )
         return message
-    
-    def langgraph_run(self, state):
-        pass
+
+    def build_output(self) -> Data:
+        data = Data(value="acb")
+        self.status = data
+        return data

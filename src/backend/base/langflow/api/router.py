@@ -15,6 +15,7 @@ from langflow.api.v1 import (
     variables_router,
     folders_router,
     starter_projects_router,
+    langgraph_run_router
 )
 
 router = APIRouter(
@@ -33,3 +34,4 @@ router.include_router(files_router)
 router.include_router(monitor_router)
 router.include_router(folders_router)
 router.include_router(starter_projects_router)
+router.include_router(langgraph_run_router)
