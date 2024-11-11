@@ -450,6 +450,7 @@ export const logTypeIsUnknown = (
 ) => {
   if (!outputName) return;
   const outputs = data?.outputs[outputName];
+  console.log("Flag outputs", outputs)
   if (Array.isArray(outputs) && outputs.length > 1) {
     return outputs.some((outputLog) => outputLog.type === "unknown");
   } else {
