@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
+import uaParser from "ua-parser-js";
 
+// TODO: This component doesn't have table input needs updating
 test("user must be able to interact with table input component", async ({
   page,
 }) => {
@@ -26,8 +28,16 @@ test("user must be able to interact with table input component", async ({
   const secondRandomText = Math.random().toString(36).substring(7);
   const thirdRandomText = Math.random().toString(36).substring(7);
 
+  const getUA = await page.evaluate(() => navigator.userAgent);
+  const userAgentInfo = uaParser(getUA);
+  let control = "Control";
+
+  if (userAgentInfo.os.name.includes("Mac")) {
+    control = "Meta";
+  }
+
   while (modalCount === 0) {
-    await page.getByText("New Project", { exact: true }).click();
+    await page.getByText("New Flow", { exact: true }).click();
     await page.waitForTimeout(3000);
     modalCount = await page.getByTestId("modal-title")?.count();
   }
@@ -35,21 +45,13 @@ test("user must be able to interact with table input component", async ({
     timeout: 30000,
   });
   await page.getByTestId("blank-flow").click();
-  await page.waitForSelector('[data-testid="extended-disclosure"]', {
-    timeout: 30000,
-  });
 
-  await page.getByTestId("extended-disclosure").click();
-  await page.getByPlaceholder("Search").click();
-  await page.getByPlaceholder("Search").fill("custom component");
   await page.waitForTimeout(1000);
 
-  await page
-    .getByTestId("helpersCustom Component")
-    .dragTo(page.locator('//*[@id="react-flow-id"]'));
+  await page.getByTestId("sidebar-custom-component-button").click();
 
-  await page.getByTitle("zoom out").click();
-  await page.getByTitle("zoom out").click();
+  await page.getByTestId("zoom_out").click();
+  await page.getByTestId("zoom_out").click();
 
   await page.getByTestId("div-generic-node").click();
   await page.getByTestId("code-button-modal").click();
@@ -99,7 +101,7 @@ class CustomComponent(Component):
         return data
   `;
 
-  await page.locator("textarea").press("Control+a");
+  await page.locator("textarea").press(`${control}+a`);
   await page.locator("textarea").fill(customCodeWithError);
 
   await page.getByText("Check & Save").last().click();
@@ -123,7 +125,7 @@ class CustomComponent(Component):
   ];
 
   for (const text of allVisibleTexts) {
-    await expect(page.getByText(text)).toBeVisible();
+    await expect(page.getByText(text).last()).toBeVisible();
   }
 
   await page.locator(".ag-cell-value").first().click();
@@ -152,7 +154,7 @@ class CustomComponent(Component):
 
   await page.locator('input[type="checkbox"]').last().click();
 
-  await page.getByTestId("icon-Copy").click();
+  await page.getByTestId("icon-Copy").last().click();
 
   await page.waitForTimeout(500);
 
@@ -160,7 +162,7 @@ class CustomComponent(Component):
   expect(numberOfCopiedRows).toBe(2);
 
   await page.locator('input[type="checkbox"]').last().click();
-  await page.getByTestId("icon-Trash2").click();
+  await page.getByTestId("icon-Trash2").last().click();
 
   await page.waitForTimeout(500);
 

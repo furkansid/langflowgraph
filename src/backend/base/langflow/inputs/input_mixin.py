@@ -18,7 +18,7 @@ from langflow.schema.table import Column, TableSchema
 class FieldTypes(str, Enum):
     TEXT = "str"
     INTEGER = "int"
-    PASSWORD = "str"
+    PASSWORD = "str"  # noqa: PIE796, S105
     FLOAT = "float"
     BOOLEAN = "bool"
     DICT = "dict"
@@ -28,13 +28,15 @@ class FieldTypes(str, Enum):
     CODE = "code"
     OTHER = "other"
     TABLE = "table"
+    LINK = "link"
+    SLIDER = "slider"
 
 
 SerializableFieldTypes = Annotated[FieldTypes, PlainSerializer(lambda v: v.value, return_type=str)]
 
 
 # Base mixin for common input field attributes and methods
-class BaseInputMixin(BaseModel, validate_assignment=True):  # type: ignore
+class BaseInputMixin(BaseModel, validate_assignment=True):  # type: ignore[call-arg]
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
         extra="forbid",
@@ -104,6 +106,10 @@ class BaseInputMixin(BaseModel, validate_assignment=True):  # type: ignore
         return dump
 
 
+class ToolModeMixin(BaseModel):
+    tool_mode: bool = False
+
+
 class InputTraceMixin(BaseModel):
     trace_as_input: bool = True
 
@@ -131,13 +137,16 @@ class FileMixin(BaseModel):
     @classmethod
     def validate_file_types(cls, v):
         if not isinstance(v, list):
-            raise ValueError("file_types must be a list")
+            msg = "file_types must be a list"
+            raise ValueError(msg)  # noqa: TRY004
         # types should be a list of extensions without the dot
         for file_type in v:
             if not isinstance(file_type, str):
-                raise ValueError("file_types must be a list of strings")
+                msg = "file_types must be a list of strings"
+                raise ValueError(msg)  # noqa: TRY004
             if file_type.startswith("."):
-                raise ValueError("file_types should not start with a dot")
+                msg = "file_types should not start with a dot"
+                raise ValueError(msg)
         return v
 
 
@@ -156,6 +165,23 @@ class MultilineMixin(BaseModel):
     multiline: CoalesceBool = True
 
 
+class LinkMixin(BaseModel):
+    icon: str | None = None
+    """Icon to be displayed in the link."""
+    text: str | None = None
+    """Text to be displayed in the link."""
+
+
+class SliderMixin(BaseModel):
+    min_label: str = Field(default="")
+    max_label: str = Field(default="")
+    min_label_icon: str = Field(default="")
+    max_label_icon: str = Field(default="")
+    slider_buttons: bool = Field(default=False)
+    slider_buttons_options: list[str] = Field(default=[])
+    slider_input: bool = Field(default=False)
+
+
 class TableMixin(BaseModel):
     table_schema: TableSchema | list[Column] | None = None
 
@@ -166,4 +192,5 @@ class TableMixin(BaseModel):
             return TableSchema(columns=v)
         if isinstance(v, TableSchema):
             return v
-        raise ValueError("table_schema must be a TableSchema or a list of Columns")
+        msg = "table_schema must be a TableSchema or a list of Columns"
+        raise ValueError(msg)

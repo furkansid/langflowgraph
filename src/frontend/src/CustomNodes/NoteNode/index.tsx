@@ -9,9 +9,7 @@ import { noteDataType } from "@/types/flow";
 import { cn } from "@/utils/utils";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NodeResizer, NodeToolbar } from "reactflow";
-import IconComponent from "../../components/genericIconComponent";
 import NodeDescription from "../GenericNode/components/NodeDescription";
-import NodeName from "../GenericNode/components/NodeName";
 import NoteToolbarComponent from "./NoteToolbarComponent";
 function NoteNode({
   data,
@@ -21,15 +19,17 @@ function NoteNode({
   selected: boolean;
 }) {
   const bgColor =
-    data.node?.template.backgroundColor ?? Object.keys(COLOR_OPTIONS)[0];
+    Object.keys(COLOR_OPTIONS).find(
+      (key) => key === data.node?.template.backgroundColor,
+    ) ?? Object.keys(COLOR_OPTIONS)[0];
   const nodeDiv = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   //tricky to start the description with the right size
   useEffect(() => {
     if (nodeDiv.current) {
       setSize({
-        width: nodeDiv.current.offsetWidth - 43,
-        height: nodeDiv.current.offsetHeight - 80,
+        width: nodeDiv.current.offsetWidth - 25,
+        height: nodeDiv.current.offsetHeight - 25,
       });
     }
   }, []);
@@ -51,7 +51,7 @@ function NoteNode({
         maxWidth={NOTE_NODE_MAX_WIDTH}
         onResize={(_, params) => {
           const { width, height } = params;
-          setSize({ width: width - 43, height: height - 80 });
+          setSize({ width: width - 25, height: height - 25 });
         }}
         isVisible={selected}
         lineClassName="border-[3px] border-border"
@@ -63,43 +63,43 @@ function NoteNode({
           maxWidth: NOTE_NODE_MAX_WIDTH,
           minWidth: NOTE_NODE_MIN_WIDTH,
           minHeight: NOTE_NODE_MIN_HEIGHT,
-          backgroundColor: COLOR_OPTIONS[bgColor],
+          backgroundColor: COLOR_OPTIONS[bgColor] ?? "#00000000",
         }}
         ref={nodeDiv}
         className={cn(
-          "flex h-full w-full flex-col gap-3 rounded-md border border-b p-5 transition-all",
-          selected ? "" : "-z-50 shadow-sm",
+          "flex h-full w-full flex-col gap-3 rounded-xl p-3 transition-all",
+          COLOR_OPTIONS[bgColor] !== null &&
+            `border ${!selected && "-z-50 shadow-sm"}`,
         )}
       >
-        <div className="flex h-fit w-full items-center align-middle">
-          <div className="flex w-full gap-2">
-            <div data-testid="note_icon">
-              <IconComponent name="SquarePen" className="min-w-fit" />
-            </div>
-
-            <div className="w-11/12">
-              <NodeName
-                nodeId={data.id}
-                selected={selected}
-                display_name={data.node?.display_name || "Note"}
-              />
-            </div>
-          </div>
-        </div>
         <div
           style={{
             width: size.width,
             height: size.height,
+            display: "flex",
           }}
         >
           <NodeDescription
-            inputClassName="border-0 ring-transparent resize-none rounded-none shadow-none h-full w-full"
-            style={{ backgroundColor: COLOR_OPTIONS[bgColor] }}
+            inputClassName={cn(
+              "border-0 ring-transparent resize-none shadow-none rounded-sm h-full w-full",
+              COLOR_OPTIONS[bgColor] === null
+                ? ""
+                : "dark:!ring-background dark:text-background",
+            )}
+            mdClassName={
+              COLOR_OPTIONS[bgColor] === null
+                ? "dark:prose-invert"
+                : "dark:!text-background"
+            }
+            style={{ backgroundColor: COLOR_OPTIONS[bgColor] ?? "#00000000" }}
             charLimit={2500}
             nodeId={data.id}
             selected={selected}
             description={data.node?.description}
             emptyPlaceholder="Double-click to start typing or enter Markdown..."
+            placeholderClassName={
+              COLOR_OPTIONS[bgColor] === null ? "" : "dark:!text-background"
+            }
           />
         </div>
       </div>

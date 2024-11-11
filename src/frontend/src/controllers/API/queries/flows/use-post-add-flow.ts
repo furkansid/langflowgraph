@@ -1,3 +1,4 @@
+import { useFolderStore } from "@/stores/foldersStore";
 import { useMutationFunctionType } from "@/types/api";
 import { UseMutationResult } from "@tanstack/react-query";
 import { ReactFlowJsonObject } from "reactflow";
@@ -12,6 +13,7 @@ interface IPostAddFlow {
   is_component: boolean;
   folder_id: string;
   endpoint_name: string | undefined;
+  icon: string | undefined;
 }
 
 export const usePostAddFlow: useMutationFunctionType<
@@ -19,6 +21,7 @@ export const usePostAddFlow: useMutationFunctionType<
   IPostAddFlow
 > = (options?) => {
   const { mutate, queryClient } = UseRequestProcessor();
+  const myCollectionId = useFolderStore((state) => state.myCollectionId);
 
   const postAddFlowFn = async (payload: IPostAddFlow): Promise<any> => {
     const response = await api.post(`${getURL("FLOWS")}/`, {
@@ -27,6 +30,7 @@ export const usePostAddFlow: useMutationFunctionType<
       description: payload.description,
       is_component: payload.is_component,
       folder_id: payload.folder_id || null,
+      icon: payload.icon || null,
       endpoint_name: payload.endpoint_name || null,
     });
 
@@ -38,8 +42,10 @@ export const usePostAddFlow: useMutationFunctionType<
     postAddFlowFn,
     {
       ...options,
-      onSettled: () => {
-        queryClient.refetchQueries({ queryKey: ["useGetFolder"] });
+      onSettled: (response) => {
+        queryClient.refetchQueries({
+          queryKey: ["useGetFolder", response.folder_id ?? myCollectionId],
+        });
       },
     },
   );

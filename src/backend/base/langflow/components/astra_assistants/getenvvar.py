@@ -1,4 +1,5 @@
 import os
+
 from langflow.custom import Component
 from langflow.inputs import StrInput
 from langflow.schema.message import Message
@@ -8,7 +9,7 @@ from langflow.template import Output
 class GetEnvVar(Component):
     display_name = "Get env var"
     description = "Get env var"
-    icon = "custom_components"
+    icon = "code"
 
     inputs = [
         StrInput(
@@ -24,7 +25,6 @@ class GetEnvVar(Component):
 
     def process_inputs(self) -> Message:
         if self.env_var_name not in os.environ:
-            raise Exception(f"Environment variable {self.env_var_name} not set")
-        else:
-            message = Message(text=os.environ[self.env_var_name])
-            return message
+            msg = f"Environment variable {self.env_var_name} not set"
+            raise ValueError(msg)
+        return Message(text=os.environ[self.env_var_name])

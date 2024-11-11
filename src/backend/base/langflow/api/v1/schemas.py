@@ -4,7 +4,14 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_serializer,
+)
 
 from langflow.graph.schema import RunOutputs
 from langflow.graph.utils import serialize_field
@@ -15,7 +22,9 @@ from langflow.services.database.models.api_key.model import ApiKeyRead
 from langflow.services.database.models.base import orjson_dumps
 from langflow.services.database.models.flow import FlowCreate, FlowRead
 from langflow.services.database.models.user import UserRead
+from langflow.services.settings.feature_flags import FeatureFlags
 from langflow.services.tracing.schema import Log
+from langflow.utils.util_strings import truncate_long_strings
 
 
 class BuildStatus(Enum):
@@ -92,7 +101,7 @@ class ChatMessage(BaseModel):
 
     is_bot: bool = False
     message: str | None | dict = None
-    chatKey: str | None = None
+    chat_key: str | None = Field(None, serialization_alias="chatKey")
     type: str = "human"
 
 
@@ -108,8 +117,9 @@ class ChatResponse(ChatMessage):
     @field_validator("type")
     @classmethod
     def validate_message_type(cls, v):
-        if v not in ["start", "stream", "end", "error", "info", "file"]:
-            raise ValueError("type must be start, stream, end, error, info, or file")
+        if v not in {"start", "stream", "end", "error", "info", "file"}:
+            msg = "type must be start, stream, end, error, info, or file"
+            raise ValueError(msg)
         return v
 
 
@@ -132,8 +142,9 @@ class FileResponse(ChatMessage):
     @field_validator("data_type")
     @classmethod
     def validate_data_type(cls, v):
-        if v not in ["image", "csv"]:
-            raise ValueError("data_type must be image or csv")
+        if v not in {"image", "csv"}:
+            msg = "data_type must be image or csv"
+            raise ValueError(msg)
         return v
 
 
@@ -156,7 +167,7 @@ class FlowListReadWithFolderName(BaseModel):
 
 
 class InitResponse(BaseModel):
-    flowId: str
+    flow_id: str = Field(serialization_alias="flowId")
 
 
 class BuiltResponse(BaseModel):
@@ -166,7 +177,7 @@ class BuiltResponse(BaseModel):
 class UploadFileResponse(BaseModel):
     """Upload file response schema."""
 
-    flowId: str
+    flow_id: str = Field(serialization_alias="flowId")
     file_path: Path
 
 
@@ -281,6 +292,11 @@ class VertexBuildResponse(BaseModel):
     timestamp: datetime | None = Field(default_factory=lambda: datetime.now(timezone.utc))
     """Timestamp of the build."""
 
+    @field_serializer("data")
+    def serialize_data(self, data: ResultDataResponse) -> dict:
+        data_dict = data.model_dump() if isinstance(data, BaseModel) else data
+        return truncate_long_strings(data_dict)
+
 
 class VerticesBuiltResponse(BaseModel):
     vertices: list[VertexBuildResponse]
@@ -289,9 +305,11 @@ class VerticesBuiltResponse(BaseModel):
 class InputValueRequest(BaseModel):
     components: list[str] | None = []
     input_value: str | None = None
+    session: str | None = None
     type: InputType | None = Field(
         "any",
-        description="Defines on which components the input value should be applied. 'any' applies to all input components.",
+        description="Defines on which components the input value should be applied. "
+        "'any' applies to all input components.",
     )
 
     # add an example
@@ -301,9 +319,16 @@ class InputValueRequest(BaseModel):
                 {
                     "components": ["components_id", "Component Name"],
                     "input_value": "input_value",
+                    "session": "session_id",
                 },
                 {"components": ["Component Name"], "input_value": "input_value"},
                 {"input_value": "input_value"},
+                {
+                    "components": ["Component Name"],
+                    "input_value": "input_value",
+                    "session": "session_id",
+                },
+                {"input_value": "input_value", "session": "session_id"},
                 {"type": "chat", "input_value": "input_value"},
                 {"type": "json", "input_value": '{"key": "value"}'},
             ]
@@ -337,7 +362,9 @@ class FlowDataRequest(BaseModel):
 
 
 class ConfigResponse(BaseModel):
+    feature_flags: FeatureFlags
     frontend_timeout: int
     auto_saving: bool
     auto_saving_interval: int
     health_check_max_retries: int
+    max_file_size_upload: int

@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any
 
 OPENAI_MODELS = [
     "text-davinci-003",
@@ -62,10 +62,11 @@ DIRECT_TYPES = [
     "prompt",
     "code",
     "NestedDict",
+    "table",
 ]
 
 
-LOADERS_INFO: List[Dict[str, Any]] = [
+LOADERS_INFO: list[dict[str, Any]] = [
     {
         "loader": "AirbyteJSONLoader",
         "name": "Airbyte JSON (.jsonl)",
@@ -183,3 +184,5 @@ MESSAGE_SENDER_AI = "Machine"
 MESSAGE_SENDER_USER = "User"
 MESSAGE_SENDER_NAME_AI = "AI"
 MESSAGE_SENDER_NAME_USER = "User"
+
+MAX_TEXT_LENGTH = 99999

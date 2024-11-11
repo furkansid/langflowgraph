@@ -1,11 +1,12 @@
 import { LANGFLOW_ACCESS_TOKEN } from "@/constants/constants";
 import { useCustomApiHeaders } from "@/customization/hooks/use-custom-api-headers";
 import useAuthStore from "@/stores/authStore";
+import { useUtilityStore } from "@/stores/utilityStore";
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from "axios";
-import { useContext, useEffect } from "react";
+import * as fetchIntercept from "fetch-intercept";
+import { useEffect } from "react";
 import { Cookies } from "react-cookie";
 import { BuildStatus } from "../../constants/enums";
-import { AuthContext } from "../../contexts/authContext";
 import useAlertStore from "../../stores/alertStore";
 import useFlowStore from "../../stores/flowStore";
 import { checkDuplicateRequestAndStoreRequest } from "./helpers/check-duplicate-requests";
@@ -20,15 +21,43 @@ const cookies = new Cookies();
 function ApiInterceptor() {
   const autoLogin = useAuthStore((state) => state.autoLogin);
   const setErrorData = useAlertStore((state) => state.setErrorData);
-  let { accessToken, authenticationErrorCount } = useContext(AuthContext);
+  const accessToken = useAuthStore((state) => state.accessToken);
+  const authenticationErrorCount = useAuthStore(
+    (state) => state.authenticationErrorCount,
+  );
+  const setAuthenticationErrorCount = useAuthStore(
+    (state) => state.setAuthenticationErrorCount,
+  );
+
   const { mutate: mutationLogout } = useLogout();
   const { mutate: mutationRenewAccessToken } = useRefreshAccessToken();
   const isLoginPage = location.pathname.includes("login");
   const customHeaders = useCustomApiHeaders();
 
+  const setHealthCheckTimeout = useUtilityStore(
+    (state) => state.setHealthCheckTimeout,
+  );
+
   useEffect(() => {
+    const unregister = fetchIntercept.register({
+      request: function (url, config) {
+        const accessToken = cookies.get(LANGFLOW_ACCESS_TOKEN);
+        if (accessToken && !isAuthorizedURL(config?.url)) {
+          config.headers["Authorization"] = `Bearer ${accessToken}`;
+        }
+
+        for (const [key, value] of Object.entries(customHeaders)) {
+          config.headers[key] = value;
+        }
+        return [url, config];
+      },
+    });
+
     const interceptor = api.interceptors.response.use(
-      (response) => response,
+      (response) => {
+        setHealthCheckTimeout(null);
+        return response;
+      },
       async (error: AxiosError) => {
         const isAuthenticationError =
           error?.response?.status === 403 || error?.response?.status === 401;
@@ -127,16 +156,17 @@ function ApiInterceptor() {
       // Clean up the interceptors when the component unmounts
       api.interceptors.response.eject(interceptor);
       api.interceptors.request.eject(requestInterceptor);
+      unregister();
     };
   }, [accessToken, setErrorData, customHeaders, autoLogin]);
 
   function checkErrorCount() {
     if (isLoginPage) return;
 
-    authenticationErrorCount = authenticationErrorCount + 1;
+    setAuthenticationErrorCount(authenticationErrorCount + 1);
 
     if (authenticationErrorCount > 3) {
-      authenticationErrorCount = 0;
+      setAuthenticationErrorCount(0);
       mutationLogout();
       return false;
     }
@@ -153,9 +183,9 @@ function ApiInterceptor() {
     }
     mutationRenewAccessToken(undefined, {
       onSuccess: async () => {
-        authenticationErrorCount = 0;
+        setAuthenticationErrorCount(0);
         await remakeRequest(error);
-        authenticationErrorCount = 0;
+        setAuthenticationErrorCount(0);
       },
       onError: (error) => {
         console.error(error);
@@ -222,10 +252,6 @@ async function performStreamingRequest({
     // this flag is fundamental to ensure server stops tasks when client disconnects
     Connection: "close",
   };
-  const accessToken = cookies.get(LANGFLOW_ACCESS_TOKEN);
-  if (accessToken) {
-    headers["Authorization"] = `Bearer ${accessToken}`;
-  }
   const controller = new AbortController();
   useFlowStore.getState().setBuildController(controller);
   const params = {
@@ -238,18 +264,19 @@ async function performStreamingRequest({
   }
   let current: string[] = [];
   let textDecoder = new TextDecoder();
-  const response = await fetch(url, params);
-  if (!response.ok) {
-    if (onError) {
-      onError(response.status);
-    } else {
-      throw new Error("error in streaming request");
-    }
-  }
-  if (response.body === null) {
-    return;
-  }
+
   try {
+    const response = await fetch(url, params);
+    if (!response.ok) {
+      if (onError) {
+        onError(response.status);
+      } else {
+        throw new Error("Error in streaming request.");
+      }
+    }
+    if (response.body === null) {
+      return;
+    }
     const reader = response.body.getReader();
     while (true) {
       const { done, value } = await reader.read();

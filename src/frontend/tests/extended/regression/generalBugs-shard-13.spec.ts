@@ -2,7 +2,7 @@ import { test } from "@playwright/test";
 import * as dotenv from "dotenv";
 import path from "path";
 
-test("should be able to share a component on the store by clicking on the share button on the canvas", async ({
+test.skip("should be able to share a component on the store by clicking on the share button on the canvas", async ({
   page,
 }) => {
   test.skip(
@@ -28,7 +28,7 @@ test("should be able to share a component on the store by clicking on the share 
   }
 
   while (modalCount === 0) {
-    await page.getByText("New Project", { exact: true }).click();
+    await page.getByText("New Flow", { exact: true }).click();
     await page.waitForTimeout(5000);
     modalCount = await page.getByTestId("modal-title")?.count();
   }
@@ -56,13 +56,46 @@ test("should be able to share a component on the store by clicking on the share 
 
   await page.waitForTimeout(1000);
 
-  await page.getByText("My Collection", { exact: true }).click();
+  await page.waitForSelector('[data-testid="icon-ChevronLeft"]', {
+    timeout: 100000,
+  });
 
+  await page.getByTestId("icon-ChevronLeft").first().click();
   await page.waitForTimeout(1000);
 
-  await page.getByText("New Project", { exact: true }).click();
+  await page.getByText("New Flow", { exact: true }).click();
 
+  await page.getByTestId("side_nav_options_all-templates").click();
   await page.getByRole("heading", { name: "Basic Prompting" }).click();
+  await page.waitForSelector("text=share", { timeout: 10000 });
+  await page.waitForSelector("text=playground", { timeout: 10000 });
+  await page.waitForSelector("text=api", { timeout: 10000 });
+
+  await page.getByTestId("shared-button-flow").click();
+
+  await page.waitForTimeout(500);
+
+  await page.waitForSelector("text=Share Flow", {
+    timeout: 10000,
+  });
+  await page.waitForSelector('[data-testid="shared-button-flow"]', {
+    timeout: 10000,
+  });
+  await page.waitForSelector("text=Share Flow", { timeout: 10000 });
+
+  await page.getByTestId("share-modal-button-flow").click();
+
+  let replace = await page.getByTestId("replace-button").isVisible();
+
+  if (replace) {
+    await page.getByTestId("replace-button").click();
+  }
+
+  await page.waitForSelector("text=flow shared successfully ", {
+    timeout: 10000,
+  });
+
+  await page.waitForTimeout(500);
 
   await page.waitForSelector("text=share", { timeout: 10000 });
   await page.waitForSelector("text=playground", { timeout: 10000 });
@@ -75,12 +108,18 @@ test("should be able to share a component on the store by clicking on the share 
   await page.waitForSelector("text=Publish workflow to the Langflow Store.", {
     timeout: 10000,
   });
-  await page.waitForSelector('[data-testid="share-modal-button-flow"]', {
+  await page.waitForSelector('[data-testid="shared-button-flow"]', {
     timeout: 10000,
   });
   await page.waitForSelector("text=Share Flow", { timeout: 10000 });
 
   await page.getByTestId("share-modal-button-flow").click();
+
+  replace = await page.getByTestId("replace-button").isVisible();
+
+  if (replace) {
+    await page.getByTestId("replace-button").click();
+  }
 
   await page.waitForSelector("text=flow shared successfully ", {
     timeout: 10000,

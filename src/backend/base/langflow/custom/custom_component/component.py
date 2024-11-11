@@ -1,20 +1,29 @@
+from __future__ import annotations
+
+import ast
+import asyncio
 import inspect
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Iterator
 from copy import deepcopy
+from textwrap import dedent
 from typing import TYPE_CHECKING, Any, ClassVar, get_type_hints
-from uuid import UUID
 
-import nanoid  # type: ignore
+import nanoid
 import yaml
-from pydantic import BaseModel
+from langchain_core.tools import StructuredTool
+from pydantic import BaseModel, ValidationError
 
-from langflow.events.event_manager import EventManager
+from langflow.base.tools.constants import TOOL_OUTPUT_DISPLAY_NAME, TOOL_OUTPUT_NAME
+from langflow.custom.tree_visitor import RequiredInputsVisitor
+from langflow.exceptions.component import StreamingError
+from langflow.field_typing import Tool  # noqa: TCH001 Needed by _add_toolkit_output
 from langflow.graph.state.model import create_state_model
 from langflow.helpers.custom import format_type
+from langflow.memory import delete_message, store_message, update_messages
 from langflow.schema.artifact import get_artifact_type, post_process_raw
 from langflow.schema.data import Data
-from langflow.schema.log import LoggableType
-from langflow.schema.message import Message
+from langflow.schema.message import ErrorMessage, Message
+from langflow.schema.properties import Source
 from langflow.services.tracing.schema import Log
 from langflow.template.field.base import UNDEFINED, Input, Output
 from langflow.template.frontend_node.custom_components import ComponentFrontendNode
@@ -24,22 +33,42 @@ from langflow.utils.util import find_closest_match
 from .custom_component import CustomComponent
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from langflow.events.event_manager import EventManager
     from langflow.graph.edge.schema import EdgeData
     from langflow.graph.vertex.base import Vertex
     from langflow.inputs.inputs import InputTypes
+    from langflow.schema import dotdict
+    from langflow.schema.log import LoggableType
+
+
+_ComponentToolkit = None
+
+
+def _get_component_toolkit():
+    global _ComponentToolkit  # noqa: PLW0603
+    if _ComponentToolkit is None:
+        from langflow.base.tools.component_tool import ComponentToolkit
+
+        _ComponentToolkit = ComponentToolkit
+    return _ComponentToolkit
+
 
 BACKWARDS_COMPATIBLE_ATTRIBUTES = ["user_id", "vertex", "tracing_service"]
-CONFIG_ATTRIBUTES = ["_display_name", "_description", "_icon", "_name"]
+CONFIG_ATTRIBUTES = ["_display_name", "_description", "_icon", "_name", "_metadata"]
 
 
 class Component(CustomComponent):
-    inputs: list["InputTypes"] = []
+    inputs: list[InputTypes] = []
     outputs: list[Output] = []
     code_class_base_inheritance: ClassVar[str] = "Component"
-    _output_logs: dict[str, Log] = {}
+    _output_logs: dict[str, list[Log]] = {}
     _current_output: str = ""
+    _metadata: dict = {}
+    _ctx: dict = {}
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         # if key starts with _ it is a config
         # else it is an input
         inputs = {}
@@ -51,7 +80,7 @@ class Component(CustomComponent):
                 config[key[1:]] = value
             else:
                 inputs[key] = value
-        self._inputs: dict[str, "InputTypes"] = {}
+        self._inputs: dict[str, InputTypes] = {}
         self._outputs_map: dict[str, Output] = {}
         self._results: dict[str, Any] = {}
         self._attributes: dict[str, Any] = {}
@@ -79,16 +108,64 @@ class Component(CustomComponent):
         if self.outputs is not None:
             self.map_outputs(self.outputs)
         # Set output types
-        self._set_output_types()
+        self._set_output_types(list(self._outputs_map.values()))
         self.set_class_code()
+        self._set_output_required_inputs()
 
-    def set_event_manager(self, event_manager: EventManager | None = None):
+    @property
+    def ctx(self):
+        if not hasattr(self, "graph") or self.graph is None:
+            msg = "Graph not found. Please build the graph first."
+            raise ValueError(msg)
+        return self.graph.context
+
+    def add_to_ctx(self, key: str, value: Any, *, overwrite: bool = False) -> None:
+        """Add a key-value pair to the context.
+
+        Args:
+            key (str): The key to add.
+            value (Any): The value to associate with the key.
+            overwrite (bool, optional): Whether to overwrite the existing value. Defaults to False.
+
+        Raises:
+            ValueError: If the graph is not built.
+        """
+        if not hasattr(self, "graph") or self.graph is None:
+            msg = "Graph not found. Please build the graph first."
+            raise ValueError(msg)
+        if key in self.graph.context and not overwrite:
+            msg = f"Key {key} already exists in context. Set overwrite=True to overwrite."
+            raise ValueError(msg)
+        self.graph.context.update({key: value})
+
+    def update_ctx(self, value_dict: dict[str, Any]) -> None:
+        """Update the context with a dictionary of values.
+
+        Args:
+            value_dict (dict[str, Any]): The dictionary of values to update.
+
+        Raises:
+            ValueError: If the graph is not built.
+        """
+        if not hasattr(self, "graph") or self.graph is None:
+            msg = "Graph not found. Please build the graph first."
+            raise ValueError(msg)
+        if not isinstance(value_dict, dict):
+            msg = "Value dict must be a dictionary"
+            raise TypeError(msg)
+
+        self.graph.context.update(value_dict)
+
+    def _pre_run_setup(self):
+        pass
+
+    def set_event_manager(self, event_manager: EventManager | None = None) -> None:
         self._event_manager = event_manager
 
-    def _reset_all_output_values(self):
+    def _reset_all_output_values(self) -> None:
         if isinstance(self._outputs_map, dict):
             for output in self._outputs_map.values():
-                setattr(output, "value", UNDEFINED)
+                output.value = UNDEFINED
 
     def _build_state_model(self):
         if self._state_model:
@@ -113,8 +190,8 @@ class Component(CustomComponent):
     def __deepcopy__(self, memo):
         if id(self) in memo:
             return memo[id(self)]
-        kwargs = deepcopy(self.__config)
-        kwargs["inputs"] = deepcopy(self.__inputs)
+        kwargs = deepcopy(self.__config, memo)
+        kwargs["inputs"] = deepcopy(self.__inputs, memo)
         new_component = type(self)(**kwargs)
         new_component._code = self._code
         new_component._outputs_map = self._outputs_map
@@ -128,22 +205,23 @@ class Component(CustomComponent):
         memo[id(self)] = new_component
         return new_component
 
-    def set_class_code(self):
+    def set_class_code(self) -> None:
         # Get the source code of the calling class
         if self._code:
             return
         try:
             module = inspect.getmodule(self.__class__)
             if module is None:
-                raise ValueError("Could not find module for class")
+                msg = "Could not find module for class"
+                raise ValueError(msg)
             class_code = inspect.getsource(module)
             self._code = class_code
-        except OSError:
-            raise ValueError(f"Could not find source code for {self.__class__.__name__}")
+        except OSError as e:
+            msg = f"Could not find source code for {self.__class__.__name__}"
+            raise ValueError(msg) from e
 
     def set(self, **kwargs):
-        """
-        Connects the component to other components or sets parameters and attributes.
+        """Connects the component to other components or sets parameters and attributes.
 
         Args:
             **kwargs: Keyword arguments representing the connections, parameters, and attributes.
@@ -159,29 +237,23 @@ class Component(CustomComponent):
         return self
 
     def list_inputs(self):
-        """
-        Returns a list of input names.
-        """
+        """Returns a list of input names."""
         return [_input.name for _input in self.inputs]
 
     def list_outputs(self):
-        """
-        Returns a list of output names.
-        """
+        """Returns a list of output names."""
         return [_output.name for _output in self._outputs_map.values()]
 
     async def run(self):
-        """
-        Executes the component's logic and returns the result.
+        """Executes the component's logic and returns the result.
 
         Returns:
             The result of executing the component's logic.
         """
         return await self._run()
 
-    def set_vertex(self, vertex: "Vertex"):
-        """
-        Sets the vertex for the component.
+    def set_vertex(self, vertex: Vertex) -> None:
+        """Sets the vertex for the component.
 
         Args:
             vertex (Vertex): The vertex to set.
@@ -192,8 +264,7 @@ class Component(CustomComponent):
         self._vertex = vertex
 
     def get_input(self, name: str) -> Any:
-        """
-        Retrieves the value of the input with the specified name.
+        """Retrieves the value of the input with the specified name.
 
         Args:
             name (str): The name of the input.
@@ -206,11 +277,11 @@ class Component(CustomComponent):
         """
         if name in self._inputs:
             return self._inputs[name]
-        raise ValueError(f"Input {name} not found in {self.__class__.__name__}")
+        msg = f"Input {name} not found in {self.__class__.__name__}"
+        raise ValueError(msg)
 
     def get_output(self, name: str) -> Any:
-        """
-        Retrieves the output with the specified name.
+        """Retrieves the output with the specified name.
 
         Args:
             name (str): The name of the output to retrieve.
@@ -223,24 +294,26 @@ class Component(CustomComponent):
         """
         if name in self._outputs_map:
             return self._outputs_map[name]
-        raise ValueError(f"Output {name} not found in {self.__class__.__name__}")
+        msg = f"Output {name} not found in {self.__class__.__name__}"
+        raise ValueError(msg)
 
-    def set_on_output(self, name: str, **kwargs):
+    def set_on_output(self, name: str, **kwargs) -> None:
         output = self.get_output(name)
         for key, value in kwargs.items():
             if not hasattr(output, key):
-                raise ValueError(f"Output {name} does not have a method {key}")
+                msg = f"Output {name} does not have a method {key}"
+                raise ValueError(msg)
             setattr(output, key, value)
 
-    def set_output_value(self, name: str, value: Any):
+    def set_output_value(self, name: str, value: Any) -> None:
         if name in self._outputs_map:
             self._outputs_map[name].value = value
         else:
-            raise ValueError(f"Output {name} not found in {self.__class__.__name__}")
+            msg = f"Output {name} not found in {self.__class__.__name__}"
+            raise ValueError(msg)
 
-    def map_outputs(self, outputs: list[Output]):
-        """
-        Maps the given list of outputs to the component.
+    def map_outputs(self, outputs: list[Output]) -> None:
+        """Maps the given list of outputs to the component.
 
         Args:
             outputs (List[Output]): The list of outputs to be mapped.
@@ -253,14 +326,14 @@ class Component(CustomComponent):
         """
         for output in outputs:
             if output.name is None:
-                raise ValueError("Output name cannot be None.")
+                msg = "Output name cannot be None."
+                raise ValueError(msg)
             # Deepcopy is required to avoid modifying the original component;
             # allows each instance of each component to modify its own output
             self._outputs_map[output.name] = deepcopy(output)
 
-    def map_inputs(self, inputs: list["InputTypes"]):
-        """
-        Maps the given inputs to the component.
+    def map_inputs(self, inputs: list[InputTypes]) -> None:
+        """Maps the given inputs to the component.
 
         Args:
             inputs (List[InputTypes]): A list of InputTypes objects representing the inputs.
@@ -271,12 +344,12 @@ class Component(CustomComponent):
         """
         for input_ in inputs:
             if input_.name is None:
-                raise ValueError("Input name cannot be None.")
+                msg = "Input name cannot be None."
+                raise ValueError(msg)
             self._inputs[input_.name] = deepcopy(input_)
 
-    def validate(self, params: dict):
-        """
-        Validates the component parameters.
+    def validate(self, params: dict) -> None:
+        """Validates the component parameters.
 
         Args:
             params (dict): A dictionary containing the component parameters.
@@ -288,11 +361,78 @@ class Component(CustomComponent):
         self._validate_inputs(params)
         self._validate_outputs()
 
-    def _set_output_types(self):
-        for output in self._outputs_map.values():
-            return_types = self._get_method_return_type(output.method)
-            output.add_types(return_types)
-            output.set_selected()
+    def update_inputs(
+        self,
+        build_config: dotdict,
+        field_value: Any,
+        field_name: str | None = None,
+    ):
+        return self.update_build_config(build_config, field_value, field_name)
+
+    def run_and_validate_update_outputs(self, frontend_node: dict, field_name: str, field_value: Any):
+        frontend_node = self.update_outputs(frontend_node, field_name, field_value)
+        if field_name == "tool_mode":
+            # Replace all outputs with the tool_output value if tool_mode is True
+            # else replace it with the original outputs
+            frontend_node["outputs"] = [self._build_tool_output()] if field_value else frontend_node["outputs"]
+        return self._validate_frontend_node(frontend_node)
+
+    def _validate_frontend_node(self, frontend_node: dict):
+        # Check if all outputs are either Output or a valid Output model
+        for index, output in enumerate(frontend_node["outputs"]):
+            if isinstance(output, dict):
+                try:
+                    _output = Output(**output)
+                    self._set_output_return_type(_output)
+                    _output_dict = _output.model_dump()
+                except ValidationError as e:
+                    msg = f"Invalid output: {e}"
+                    raise ValueError(msg) from e
+            elif isinstance(output, Output):
+                # we need to serialize it
+                self._set_output_return_type(output)
+                _output_dict = output.model_dump()
+            else:
+                msg = f"Invalid output type: {type(output)}"
+                raise TypeError(msg)
+            frontend_node["outputs"][index] = _output_dict
+        return frontend_node
+
+    def update_outputs(self, frontend_node: dict, field_name: str, field_value: Any) -> dict:  # noqa: ARG002
+        """Default implementation for updating outputs based on field changes.
+
+        Subclasses can override this to modify outputs based on field_name and field_value.
+        """
+        return frontend_node
+
+    def _set_output_types(self, outputs: list[Output]) -> None:
+        for output in outputs:
+            self._set_output_return_type(output)
+
+    def _set_output_return_type(self, output: Output) -> None:
+        if output.method is None:
+            msg = f"Output {output.name} does not have a method"
+            raise ValueError(msg)
+        return_types = self._get_method_return_type(output.method)
+        output.add_types(return_types)
+        output.set_selected()
+
+    def _set_output_required_inputs(self) -> None:
+        for output in self.outputs:
+            if not output.method:
+                continue
+            method = getattr(self, output.method, None)
+            if not method or not callable(method):
+                continue
+            try:
+                source_code = inspect.getsource(method)
+                ast_tree = ast.parse(dedent(source_code))
+            except Exception:  # noqa: BLE001
+                ast_tree = ast.parse(dedent(self._code or ""))
+
+            visitor = RequiredInputsVisitor(self._inputs)
+            visitor.visit(ast_tree)
+            output.required_inputs = sorted(visitor.required_inputs)
 
     def get_output_by_method(self, method: Callable):
         # method is a callable and output.method is a string
@@ -300,24 +440,23 @@ class Component(CustomComponent):
         output = next((output for output in self._outputs_map.values() if output.method == method.__name__), None)
         if output is None:
             method_name = method.__name__ if hasattr(method, "__name__") else str(method)
-            raise ValueError(f"Output with method {method_name} not found")
+            msg = f"Output with method {method_name} not found"
+            raise ValueError(msg)
         return output
 
     def _inherits_from_component(self, method: Callable):
         # check if the method is a method from a class that inherits from Component
         # and that it is an output of that class
-        inherits_from_component = hasattr(method, "__self__") and isinstance(method.__self__, Component)
-        return inherits_from_component
+        return hasattr(method, "__self__") and isinstance(method.__self__, Component)
 
     def _method_is_valid_output(self, method: Callable):
         # check if the method is a method from a class that inherits from Component
         # and that it is an output of that class
-        method_is_output = (
+        return (
             hasattr(method, "__self__")
             and isinstance(method.__self__, Component)
             and method.__self__.get_output_by_method(method)
         )
-        return method_is_output
 
     def _build_error_string_from_matching_pairs(self, matching_pairs: list[tuple[Output, Input]]):
         text = ""
@@ -325,48 +464,87 @@ class Component(CustomComponent):
             text += f"{output.name}[{','.join(output.types)}]->{input_.name}[{','.join(input_.input_types or [])}]\n"
         return text
 
-    def _find_matching_output_method(self, value: "Component"):
-        # get all outputs of the value component
+    def _find_matching_output_method(self, input_name: str, value: Component):
+        """Find the output method from the given component and input name.
+
+        Find the output method from the given component (`value`) that matches the specified input (`input_name`)
+        in the current component.
+        This method searches through all outputs of the provided component to find outputs whose types match
+        the input types of the specified input in the current component. If exactly one matching output is found,
+        it returns the corresponding method. If multiple matching outputs are found, it raises an error indicating
+        ambiguity. If no matching outputs are found, it raises an error indicating that no suitable output was found.
+
+        Args:
+            input_name (str): The name of the input in the current component to match.
+            value (Component): The component whose outputs are to be considered.
+
+        Returns:
+            Callable: The method corresponding to the matching output.
+
+        Raises:
+            ValueError: If multiple matching outputs are found, if no matching outputs are found,
+                        or if the output method is invalid.
+        """
+        # Retrieve all outputs from the given component
         outputs = value._outputs_map.values()
-        # check if the any of the types in the output.types matches ONLY one input in the current component
+        # Prepare to collect matching output-input pairs
         matching_pairs = []
-        for output in outputs:
-            for input_ in self.inputs:
-                for output_type in output.types:
-                    if input_.input_types and output_type in input_.input_types:
-                        matching_pairs.append((output, input_))
+        # Get the input object from the current component
+        input_ = self._inputs[input_name]
+        # Iterate over outputs to find matches based on types
+        matching_pairs = [
+            (output, input_)
+            for output in outputs
+            for output_type in output.types
+            # Check if the output type matches the input's accepted types
+            if input_.input_types and output_type in input_.input_types
+        ]
+        # If multiple matches are found, raise an error indicating ambiguity
         if len(matching_pairs) > 1:
             matching_pairs_str = self._build_error_string_from_matching_pairs(matching_pairs)
-            raise ValueError(
-                f"There are multiple outputs from {value.__class__.__name__} that can connect to inputs in {self.__class__.__name__}: {matching_pairs_str}"
+            msg = (
+                f"There are multiple outputs from {value.__class__.__name__} "
+                f"that can connect to inputs in {self.__class__.__name__}: {matching_pairs_str}"
             )
+        # If no matches are found, raise an error indicating no suitable output
+        if not matching_pairs:
+            msg = (
+                f"No matching output from {value.__class__.__name__} found for input '{input_name}' "
+                f"in {self.__class__.__name__}."
+            )
+            raise ValueError(msg)
+        # Get the matching output and input pair
         output, input_ = matching_pairs[0]
+        # Ensure that the output method is a valid method name (string)
         if not isinstance(output.method, str):
-            raise ValueError(f"Method {output.method} is not a valid output of {value.__class__.__name__}")
+            msg = f"Method {output.method} is not a valid output of {value.__class__.__name__}"
+            raise TypeError(msg)
         return getattr(value, output.method)
 
-    def _process_connection_or_parameter(self, key, value):
+    def _process_connection_or_parameter(self, key, value) -> None:
         _input = self._get_or_create_input(key)
         # We need to check if callable AND if it is a method from a class that inherits from Component
         if isinstance(value, Component):
             # We need to find the Output that can connect to an input of the current component
             # if there's more than one output that matches, we need to raise an error
             # because we don't know which one to connect to
-            value = self._find_matching_output_method(value)
+            value = self._find_matching_output_method(key, value)
         if callable(value) and self._inherits_from_component(value):
             try:
                 self._method_is_valid_output(value)
-            except ValueError:
-                raise ValueError(
-                    f"Method {value.__name__} is not a valid output of {value.__self__.__class__.__name__}"
-                )
+            except ValueError as e:
+                msg = f"Method {value.__name__} is not a valid output of {value.__self__.__class__.__name__}"
+                raise ValueError(msg) from e
             self._connect_to_component(key, value, _input)
         else:
             self._set_parameter_or_attribute(key, value)
 
-    def _process_connection_or_parameters(self, key, value):
+    def _process_connection_or_parameters(self, key, value) -> None:
         # if value is a list of components, we need to process each component
-        if isinstance(value, list):
+        # Note this update make sure it is not a list str | int | float | bool | type(None)
+        if isinstance(value, list) and not any(
+            isinstance(val, str | int | float | bool | type(None) | Message | Data | StructuredTool) for val in value
+        ):
             for val in value:
                 self._process_connection_or_parameter(key, val)
         else:
@@ -381,13 +559,13 @@ class Component(CustomComponent):
             self.inputs.append(_input)
             return _input
 
-    def _connect_to_component(self, key, value, _input):
+    def _connect_to_component(self, key, value, _input) -> None:
         component = value.__self__
         self._components.append(component)
         output = component.get_output_by_method(value)
         self._add_edge(component, key, output, _input)
 
-    def _add_edge(self, component, key, output, _input):
+    def _add_edge(self, component, key, output, _input) -> None:
         self._edges.append(
             {
                 "source": component._id,
@@ -409,13 +587,14 @@ class Component(CustomComponent):
             }
         )
 
-    def _set_parameter_or_attribute(self, key, value):
+    def _set_parameter_or_attribute(self, key, value) -> None:
         if isinstance(value, Component):
             methods = ", ".join([f"'{output.method}'" for output in value.outputs])
-            raise ValueError(
+            msg = (
                 f"You set {value.display_name} as value for `{key}`. "
                 f"You should pass one of the following: {methods}"
             )
+            raise TypeError(msg)
         self._set_input_value(key, value)
         self._parameters[key] = value
         self._attributes[key] = value
@@ -428,11 +607,10 @@ class Component(CustomComponent):
     async def _run(self):
         # Resolve callable inputs
         for key, _input in self._inputs.items():
-            if callable(_input.value):
-                result = _input.value()
-                if inspect.iscoroutine(result):
-                    result = await result
-                self._inputs[key].value = result
+            if asyncio.iscoroutinefunction(_input.value):
+                self._inputs[key].value = await _input.value()
+            elif callable(_input.value):
+                self._inputs[key].value = await asyncio.to_thread(_input.value)
 
         self.set_attributes({})
 
@@ -449,46 +627,48 @@ class Component(CustomComponent):
             return self.__dict__[f"_{name}"]
         if name.startswith("_") and name[1:] in BACKWARDS_COMPATIBLE_ATTRIBUTES:
             return self.__dict__[name]
-        raise AttributeError(f"{name} not found in {self.__class__.__name__}")
+        msg = f"{name} not found in {self.__class__.__name__}"
+        raise AttributeError(msg)
 
-    def _set_input_value(self, name: str, value: Any):
+    def _set_input_value(self, name: str, value: Any) -> None:
         if name in self._inputs:
             input_value = self._inputs[name].value
             if isinstance(input_value, Component):
                 methods = ", ".join([f"'{output.method}'" for output in input_value.outputs])
-                raise ValueError(
+                msg = (
                     f"You set {input_value.display_name} as value for `{name}`. "
                     f"You should pass one of the following: {methods}"
                 )
-            if callable(input_value):
-                raise ValueError(
-                    f"Input {name} is connected to {input_value.__self__.display_name}.{input_value.__name__}"
-                )
+                raise ValueError(msg)
+            if callable(input_value) and hasattr(input_value, "__self__"):
+                msg = f"Input {name} is connected to {input_value.__self__.display_name}.{input_value.__name__}"
+                raise ValueError(msg)
             self._inputs[name].value = value
             if hasattr(self._inputs[name], "load_from_db"):
                 self._inputs[name].load_from_db = False
         else:
-            raise ValueError(f"Input {name} not found in {self.__class__.__name__}")
+            msg = f"Input {name} not found in {self.__class__.__name__}"
+            raise ValueError(msg)
 
-    def _validate_outputs(self):
+    def _validate_outputs(self) -> None:
         # Raise Error if some rule isn't met
         pass
 
-    def _map_parameters_on_frontend_node(self, frontend_node: ComponentFrontendNode):
+    def _map_parameters_on_frontend_node(self, frontend_node: ComponentFrontendNode) -> None:
         for name, value in self._parameters.items():
             frontend_node.set_field_value_in_template(name, value)
 
-    def _map_parameters_on_template(self, template: dict):
+    def _map_parameters_on_template(self, template: dict) -> None:
         for name, value in self._parameters.items():
             try:
                 template[name]["value"] = value
-            except KeyError:
+            except KeyError as e:
                 close_match = find_closest_match(name, list(template.keys()))
                 if close_match:
-                    raise ValueError(
-                        f"Parameter '{name}' not found in {self.__class__.__name__}. " f"Did you mean '{close_match}'?"
-                    )
-                raise ValueError(f"Parameter {name} not found in {self.__class__.__name__}. ")
+                    msg = f"Parameter '{name}' not found in {self.__class__.__name__}. Did you mean '{close_match}'?"
+                    raise ValueError(msg) from e
+                msg = f"Parameter {name} not found in {self.__class__.__name__}. "
+                raise ValueError(msg) from e
 
     def _get_method_return_type(self, method_name: str) -> list[str]:
         method = getattr(self, method_name)
@@ -500,13 +680,13 @@ class Component(CustomComponent):
         return frontend_node
 
     def to_frontend_node(self):
-        #! This part here is clunky but we need it like this for
-        #! backwards compatibility. We can change how prompt component
-        #! works and then update this later
+        # ! This part here is clunky but we need it like this for
+        # ! backwards compatibility. We can change how prompt component
+        # ! works and then update this later
         field_config = self.get_template_config(self)
         frontend_node = ComponentFrontendNode.from_inputs(**field_config)
-        for key, value in self._inputs.items():
-            frontend_node.set_field_load_from_db_in_template(key, False)
+        for key in self._inputs:
+            frontend_node.set_field_load_from_db_in_template(key, value=False)
         self._map_parameters_on_frontend_node(frontend_node)
 
         frontend_node_dict = frontend_node.to_dict(keep_name=False)
@@ -539,7 +719,7 @@ class Component(CustomComponent):
 
         frontend_node.validate_component()
         frontend_node.set_base_classes_from_outputs()
-        data = {
+        return {
             "data": {
                 "node": frontend_node.to_dict(keep_name=False),
                 "type": self.name or self.__class__.__name__,
@@ -547,9 +727,8 @@ class Component(CustomComponent):
             },
             "id": self._id,
         }
-        return data
 
-    def _validate_inputs(self, params: dict):
+    def _validate_inputs(self, params: dict) -> None:
         # Params keys are the `name` attribute of the Input objects
         for key, value in params.copy().items():
             if key not in self._inputs:
@@ -560,22 +739,23 @@ class Component(CustomComponent):
             input_.value = value
             params[input_.name] = input_.value
 
-    def set_attributes(self, params: dict):
+    def set_attributes(self, params: dict) -> None:
         self._validate_inputs(params)
         _attributes = {}
         for key, value in params.items():
             if key in self.__dict__ and value != getattr(self, key):
-                raise ValueError(
+                msg = (
                     f"{self.__class__.__name__} defines an input parameter named '{key}' "
                     f"that is a reserved word and cannot be used."
                 )
+                raise ValueError(msg)
             _attributes[key] = value
         for key, input_obj in self._inputs.items():
-            if key not in _attributes:
+            if key not in _attributes and key not in self._attributes:
                 _attributes[key] = input_obj.value or None
-        self._attributes = _attributes
+        self._attributes.update(_attributes)
 
-    def _set_outputs(self, outputs: list[dict]):
+    def _set_outputs(self, outputs: list[dict]) -> None:
         self.outputs = [Output(**output) for output in outputs]
         for output in self.outputs:
             setattr(self, output.name, output)
@@ -611,17 +791,37 @@ class Component(CustomComponent):
     async def _build_without_tracing(self):
         return await self._build_results()
 
-    async def build_results(
-        self,
-    ):
-        if self._tracing_service:
-            return await self._build_with_tracing()
-        return await self._build_without_tracing()
+    async def build_results(self):
+        """Build the results of the component."""
+        try:
+            if self._tracing_service:
+                return await self._build_with_tracing()
+            return await self._build_without_tracing()
+        except StreamingError as e:
+            self.send_error(
+                exception=e.cause,
+                session_id=self.graph.session_id,
+                trace_name=getattr(self, "trace_name", None),
+                source=e.source,
+            )
+            raise e.cause  # noqa: B904
+        except Exception as e:
+            self.send_error(
+                exception=e,
+                session_id=self.graph.session_id,
+                source=Source(id=self._id, display_name=self.display_name, source=self.display_name),
+                trace_name=getattr(self, "trace_name", None),
+            )
+            raise
 
-    async def _build_results(self):
+    async def _build_results(self) -> tuple[dict, dict]:
         _results = {}
         _artifacts = {}
+        if hasattr(self, "_pre_run_setup"):
+            self._pre_run_setup()
         if hasattr(self, "outputs"):
+            if any(getattr(_input, "tool_mode", False) for _input in self.inputs):
+                self._append_tool_to_outputs_map()
             for output in self._outputs_map.values():
                 # Build the output if it's connected to some other vertex
                 # or if it's not connected to any vertex
@@ -631,17 +831,19 @@ class Component(CustomComponent):
                     or output.name in self._vertex.edges_source_names
                 ):
                     if output.method is None:
-                        raise ValueError(f"Output {output.name} does not have a method defined.")
+                        msg = f"Output {output.name} does not have a method defined."
+                        raise ValueError(msg)
                     self._current_output = output.name
                     method: Callable = getattr(self, output.method)
                     if output.cache and output.value != UNDEFINED:
                         _results[output.name] = output.value
                         result = output.value
                     else:
-                        result = method()
                         # If the method is asynchronous, we need to await it
                         if inspect.iscoroutinefunction(method):
-                            result = await result
+                            result = await method()
+                        else:
+                            result = await asyncio.to_thread(method)
                         if (
                             self._vertex is not None
                             and isinstance(result, Message)
@@ -653,7 +855,7 @@ class Component(CustomComponent):
                         output.value = result
 
                     custom_repr = self.custom_repr()
-                    if custom_repr is None and isinstance(result, (dict, Data, str)):
+                    if custom_repr is None and isinstance(result, dict | Data | str):
                         custom_repr = result
                     if not isinstance(custom_repr, str):
                         custom_repr = str(custom_repr)
@@ -671,7 +873,7 @@ class Component(CustomComponent):
 
                     elif hasattr(raw, "model_dump") and raw is not None:
                         raw = raw.model_dump()
-                    if raw is None and isinstance(result, (dict, Data, str)):
+                    if raw is None and isinstance(result, dict | Data | str):
                         raw = result.data if isinstance(result, Data) else result
                     artifact_type = get_artifact_type(artifact_value, result)
                     raw, artifact_type = post_process_raw(raw, artifact_type)
@@ -697,12 +899,8 @@ class Component(CustomComponent):
             return str(self.repr_value)
         return self.repr_value
 
-    def build_inputs(self, user_id: str | UUID | None = None):
-        """
-        Builds the inputs for the custom component.
-
-        Args:
-            user_id (Optional[Union[str, UUID]], optional): The user ID. Defaults to None.
+    def build_inputs(self):
+        """Builds the inputs for the custom component.
 
         Returns:
             List[Input]: The list of inputs.
@@ -712,8 +910,7 @@ class Component(CustomComponent):
         self.inputs = self.template_config.get("inputs", [])
         if not self.inputs:
             return {}
-        build_config = {_input.name: _input.model_dump(by_alias=True, exclude_none=True) for _input in self.inputs}
-        return build_config
+        return {_input.name: _input.model_dump(by_alias=True, exclude_none=True) for _input in self.inputs}
 
     def _get_field_order(self):
         try:
@@ -722,29 +919,27 @@ class Component(CustomComponent):
         except KeyError:
             return []
 
-    def build(self, **kwargs):
+    def build(self, **kwargs) -> None:
         self.set_attributes(kwargs)
 
     def _get_fallback_input(self, **kwargs):
         return Input(**kwargs)
 
-    def to_tool(self):
-        # TODO: This is a temporary solution to avoid circular imports
-        from langflow.base.tools.component_tool import ComponentTool
-
-        return ComponentTool(component=self)
+    def to_toolkit(self) -> list[Tool]:
+        component_toolkit = _get_component_toolkit()
+        return component_toolkit(component=self).get_tools(callbacks=self.get_langchain_callbacks())
 
     def get_project_name(self):
         if hasattr(self, "_tracing_service") and self._tracing_service:
             return self._tracing_service.project_name
         return "Langflow"
 
-    def log(self, message: LoggableType | list[LoggableType], name: str | None = None):
-        """
-        Logs a message.
+    def log(self, message: LoggableType | list[LoggableType], name: str | None = None) -> None:
+        """Logs a message.
 
         Args:
             message (LoggableType | list[LoggableType]): The message to log.
+            name (str, optional): The name of the log. Defaults to None.
         """
         if name is None:
             name = f"Log {len(self._logs) + 1}"
@@ -757,3 +952,154 @@ class Component(CustomComponent):
             data["output"] = self._current_output
             data["component_id"] = self._id
             self._event_manager.on_log(data=data)
+
+    def _append_tool_output(self) -> None:
+        if next((output for output in self.outputs if output.name == TOOL_OUTPUT_NAME), None) is None:
+            self.outputs.append(
+                Output(
+                    name=TOOL_OUTPUT_NAME,
+                    display_name=TOOL_OUTPUT_DISPLAY_NAME,
+                    method="to_toolkit",
+                    types=["Tool"],
+                )
+            )
+
+    def send_message(self, message: Message, id_: str | None = None):
+        if (hasattr(self, "graph") and self.graph.session_id) and (message is not None and not message.session_id):
+            message.session_id = self.graph.session_id
+        stored_message = self._store_message(message)
+
+        self._stored_message_id = stored_message.id
+        try:
+            complete_message = ""
+            if (
+                self._should_stream_message(stored_message, message)
+                and message is not None
+                and isinstance(message.text, AsyncIterator | Iterator)
+            ):
+                complete_message = self._stream_message(message.text, stored_message)
+                stored_message.text = complete_message
+                stored_message = self._update_stored_message(stored_message)
+            else:
+                # Only send message event for non-streaming messages
+                self._send_message_event(stored_message, id_=id_)
+        except Exception:
+            # remove the message from the database
+            delete_message(stored_message.id)
+            raise
+        self.status = stored_message
+        return stored_message
+
+    def _store_message(self, message: Message) -> Message:
+        flow_id = self.graph.flow_id if hasattr(self, "graph") else None
+        messages = store_message(message, flow_id=flow_id)
+        if len(messages) != 1:
+            msg = "Only one message can be stored at a time."
+            raise ValueError(msg)
+
+        return messages[0]
+
+    def _send_message_event(self, message: Message, id_: str | None = None, category: str | None = None) -> None:
+        if hasattr(self, "_event_manager") and self._event_manager:
+            data_dict = message.data.copy() if hasattr(message, "data") else message.model_dump()
+            if id_ and not data_dict.get("id"):
+                data_dict["id"] = id_
+            category = category or data_dict.get("category", None)
+            match category:
+                case "error":
+                    self._event_manager.on_error(data=data_dict)
+                case "remove_message":
+                    self._event_manager.on_remove_message(data={"id": data_dict["id"]})
+                case _:
+                    self._event_manager.on_message(data=data_dict)
+
+    def _should_stream_message(self, stored_message: Message, original_message: Message) -> bool:
+        return bool(
+            hasattr(self, "_event_manager")
+            and self._event_manager
+            and stored_message.id
+            and not isinstance(original_message.text, str)
+        )
+
+    def _update_stored_message(self, stored_message: Message) -> Message:
+        message_tables = update_messages(stored_message)
+        if len(message_tables) != 1:
+            msg = "Only one message can be updated at a time."
+            raise ValueError(msg)
+        message_table = message_tables[0]
+        updated_message = Message(**message_table.model_dump())
+        self.vertex._added_message = updated_message
+        return updated_message
+
+    def _stream_message(self, iterator: AsyncIterator | Iterator, message: Message) -> str:
+        if not isinstance(iterator, AsyncIterator | Iterator):
+            msg = "The message must be an iterator or an async iterator."
+            raise TypeError(msg)
+
+        if isinstance(iterator, AsyncIterator):
+            return run_until_complete(self._handle_async_iterator(iterator, message.id, message))
+        try:
+            complete_message = ""
+            first_chunk = True
+            for chunk in iterator:
+                complete_message = self._process_chunk(
+                    chunk.content, complete_message, message.id, message, first_chunk=first_chunk
+                )
+                first_chunk = False
+        except Exception as e:
+            raise StreamingError(cause=e, source=message.properties.source) from e
+        else:
+            return complete_message
+
+    async def _handle_async_iterator(self, iterator: AsyncIterator, message_id: str, message: Message) -> str:
+        complete_message = ""
+        first_chunk = True
+        async for chunk in iterator:
+            complete_message = self._process_chunk(
+                chunk.content, complete_message, message_id, message, first_chunk=first_chunk
+            )
+            first_chunk = False
+        return complete_message
+
+    def _process_chunk(
+        self, chunk: str, complete_message: str, message_id: str, message: Message, *, first_chunk: bool = False
+    ) -> str:
+        complete_message += chunk
+        if self._event_manager:
+            if first_chunk:
+                # Send the initial message only on the first chunk
+                msg_copy = message.model_copy()
+                msg_copy.text = complete_message
+                self._send_message_event(msg_copy, id_=message_id)
+            self._event_manager.on_token(
+                data={
+                    "chunk": chunk,
+                    "id": str(message_id),
+                }
+            )
+        return complete_message
+
+    def send_error(
+        self,
+        exception: Exception,
+        session_id: str,
+        trace_name: str,
+        source: Source,
+    ) -> Message:
+        """Send an error message to the frontend."""
+        flow_id = self.graph.flow_id if hasattr(self, "graph") else None
+        error_message = ErrorMessage(
+            flow_id=flow_id,
+            exception=exception,
+            session_id=session_id,
+            trace_name=trace_name,
+            source=source,
+        )
+        self.send_message(error_message)
+        return error_message
+
+    def _append_tool_to_outputs_map(self):
+        self._outputs_map[TOOL_OUTPUT_NAME] = self._build_tool_output()
+
+    def _build_tool_output(self) -> Output:
+        return Output(name=TOOL_OUTPUT_NAME, display_name=TOOL_OUTPUT_DISPLAY_NAME, method="to_toolkit", types=["Tool"])
