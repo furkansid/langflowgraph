@@ -166,8 +166,11 @@ import {
   X,
   XCircle,
   Zap,
+  DatabaseZap,
+  Split
 } from "lucide-react";
 import { FaApple, FaDiscord, FaGithub } from "react-icons/fa";
+import { FaPeopleRoof } from "react-icons/fa6";
 import { AWSIcon } from "../icons/AWS";
 import { AirbyteIcon } from "../icons/Airbyte";
 import { AnthropicIcon } from "../icons/Anthropic";
@@ -268,6 +271,10 @@ export const gradients = [
 
 export const nodeColors: { [char: string]: string } = {
   inputs: "#10B981",
+  channels: "blue",
+  experts: "yellow",
+  datastore: "green",
+  logicbox: "yellow",
   outputs: "#AA2411",
   data: "#198BF6",
   prompts: "#4367BF",
@@ -319,6 +326,10 @@ export const nodeNames: { [char: string]: string } = {
   models: "Models",
   notion: "Notion",
   Notion: "Notion",
+  channels: "Channels",
+  experts: "Experts",
+  logicbox: "Logic Box",
+  datastore: "Data Store",
   model_specs: "Model Specs",
   chains: "Chains",
   agents: "Agents",
@@ -355,6 +366,10 @@ export const nodeIconsLucide: iconsType = {
   BotMessageSquareIcon,
   ChatInput: MessagesSquare,
   inputs: Download,
+  channels: MetaIcon,
+  experts: FaPeopleRoof,
+  datastore: DatabaseZap,
+  logicbox: Split,
   outputs: Upload,
   data: Database,
   AzureChatOpenAi: AzureIcon,
