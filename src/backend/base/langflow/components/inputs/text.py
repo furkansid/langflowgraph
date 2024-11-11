@@ -24,3 +24,6 @@ class TextInputComponent(TextComponent):
         return Message(
             text=self.input_value,
         )
+    
+    def langgraph_run(self, state):
+        pass

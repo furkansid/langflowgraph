@@ -35,6 +35,7 @@ import MessagesPage from "./pages/SettingsPage/pages/messagesPage";
 import ShortcutsPage from "./pages/SettingsPage/pages/ShortcutsPage";
 import StorePage from "./pages/StorePage";
 import ViewPage from "./pages/ViewPage";
+import LangGraphChat  from "./langGraphChat/chat";
 
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const LoginAdminPage = lazy(() => import("./pages/AdminPage/LoginPage"));
@@ -53,6 +54,12 @@ const router = createBrowserRouter(
         </ContextWrapper>
       }
     >
+      <Route
+            path="langgraph-chat/"
+            element={
+              <LangGraphChat/>
+            }
+          ></Route>
       <Route path="" element={<AppInitPage />}>
         <Route path="" element={<AppWrapperPage />}>
           <Route

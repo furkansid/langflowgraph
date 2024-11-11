@@ -1024,6 +1024,7 @@ class Graph:
 
     def __setstate__(self, state):
         run_manager = state["run_manager"]
+        print("Flag run_manager", run_manager)
         if isinstance(run_manager, RunnableVerticesManager):
             state["run_manager"] = run_manager
         else:
@@ -1416,6 +1417,8 @@ class Graph:
                         should_build = True
 
             if should_build:
+                # see here for invidual build steps
+                # from celery.contrib import rdb; rdb.set_trace()
                 await vertex.build(
                     user_id=user_id,
                     inputs=inputs_dict,
@@ -1530,6 +1533,9 @@ class Graph:
     def find_next_runnable_vertices(self, vertex_successors_ids: list[str]) -> list[str]:
         next_runnable_vertices = set()
         for v_id in sorted(vertex_successors_ids):
+
+            # if 'generic-web-expert' in vertex_id:
+            #     from celery.contrib import rdb; rdb.set_trace()
             if not self.is_vertex_runnable(v_id):
                 next_runnable_vertices.update(self.find_runnable_predecessors_for_successor(v_id))
             else:
@@ -1635,7 +1641,9 @@ class Graph:
             visited = set()
 
         # Prevent revisiting vertices to avoid infinite loops in cyclic graphs
+
         if vertex in visited:
+            print("Flag recusrive", vertex.display_name)
             return []
 
         visited.add(vertex)

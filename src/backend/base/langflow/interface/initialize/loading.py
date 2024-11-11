@@ -57,6 +57,8 @@ async def get_instance_results(
     fallback_to_env_vars: bool = False,
     base_type: str = "component",
 ):
+    # from celery.contrib import rdb;
+    # rdb.set_trace()
     custom_params = update_params_with_load_from_db_fields(
         custom_component, custom_params, vertex.load_from_db_fields, fallback_to_env_vars=fallback_to_env_vars
     )

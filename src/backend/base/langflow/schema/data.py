@@ -208,6 +208,11 @@ class Data(BaseModel):
         return isinstance(other, Data) and self.data == other.data
 
 
+
+
+class State(Data):
+    pass
+
 def custom_serializer(obj):
     if isinstance(obj, datetime):
         return obj.astimezone().isoformat()

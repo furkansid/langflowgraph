@@ -724,8 +724,12 @@ export const RUN_TIMESTAMP_PREFIX = "Last Run: ";
 export const STARTER_FOLDER_NAME = "Starter Projects";
 export const PRIORITY_SIDEBAR_ORDER = [
   "saved_components",
+  "channels",
+  "experts",
   "inputs",
   "outputs",
+  "datastore",
+  "logicbox",
   "prompts",
   "data",
   "prompt",

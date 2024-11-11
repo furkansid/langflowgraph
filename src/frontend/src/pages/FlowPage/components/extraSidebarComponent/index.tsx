@@ -239,6 +239,8 @@ export default function ExtraSidebar(): JSX.Element {
           .filter((x) => PRIORITY_SIDEBAR_ORDER.includes(x))
           .map((SBSectionName: keyof APIObjectType, index) =>
             Object.keys(dataFilter[SBSectionName]).length > 0 ? (
+              <>
+              {/* <p>{SBSectionName}</p> */}
               <SidebarCategoryComponent
                 key={`DisclosureComponent${index + search + JSON.stringify(getFilterEdge)}`}
                 search={search}
@@ -247,6 +249,7 @@ export default function ExtraSidebar(): JSX.Element {
                 name={SBSectionName}
                 onDragStart={onDragStart}
               />
+              </>
             ) : (
               <div key={index}></div>
             ),
@@ -284,7 +287,7 @@ export default function ExtraSidebar(): JSX.Element {
           defaultOpen={search.length !== 0 || getFilterEdge.length !== 0}
           key={`${search.length !== 0}-${getFilterEdge.length !== 0}-Advanced`}
           button={{
-            title: "Experimental",
+            title: "Experimental Dev",
             Icon: nodeIconsLucide.unknown,
             beta: true,
           }}

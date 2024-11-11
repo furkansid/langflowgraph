@@ -782,6 +782,7 @@ class Component(CustomComponent):
         inputs = self.get_trace_as_inputs()
         metadata = self.get_trace_as_metadata()
         async with self._tracing_service.trace_context(self, self.trace_name, inputs, metadata):
+
             _results, _artifacts = await self._build_results()
             self._tracing_service.set_outputs(self.trace_name, _results)
 

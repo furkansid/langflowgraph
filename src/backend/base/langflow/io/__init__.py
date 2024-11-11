@@ -21,6 +21,8 @@ from langflow.inputs import (
     SliderInput,
     StrInput,
     TableInput,
+    DefaultPromptField,
+    StateInput
 )
 from langflow.template import Output
 
@@ -50,4 +52,6 @@ __all__ = [
     "SliderInput",
     "StrInput",
     "TableInput",
+    "DefaultPromptField",
+    "StateInput"
 ]

@@ -11,6 +11,9 @@ from langflow.api.v1.store import router as store_router
 from langflow.api.v1.users import router as users_router
 from langflow.api.v1.validate import router as validate_router
 from langflow.api.v1.variable import router as variables_router
+from langflow.api.v1.folders import router as folders_router
+from langflow.api.v1.starter_projects import router as starter_projects_router
+from langflow.api.v1.langgraph_run import router as langgraph_run_router
 
 __all__ = [
     "api_key_router",
@@ -22,6 +25,7 @@ __all__ = [
     "login_router",
     "monitor_router",
     "starter_projects_router",
+    "langgraph_run_router",
     "store_router",
     "users_router",
     "validate_router",

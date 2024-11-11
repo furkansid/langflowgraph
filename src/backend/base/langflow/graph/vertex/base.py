@@ -493,6 +493,9 @@ class Vertex:
             self.custom_component.set_event_manager(event_manager)
             custom_params = initialize.loading.get_params(self.params)
 
+
+        # from celery.contrib import rdb;
+        # rdb.set_trace()
         await self._build_results(
             custom_component=custom_component,
             custom_params=custom_params,

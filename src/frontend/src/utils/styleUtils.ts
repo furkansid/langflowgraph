@@ -198,10 +198,13 @@ import {
   X,
   XCircle,
   Zap,
+  DatabaseZap,
+  Split,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 import { FaApple, FaDiscord, FaGithub } from "react-icons/fa";
+import { FaPeopleRoof } from "react-icons/fa6";
 import { AWSIcon } from "../icons/AWS";
 import { AirbyteIcon } from "../icons/Airbyte";
 import { AnthropicIcon } from "../icons/Anthropic";
@@ -332,6 +335,10 @@ export const flowGradients = [
 
 export const nodeColors: { [char: string]: string } = {
   inputs: "#10B981",
+  channels: "blue",
+  experts: "yellow",
+  datastore: "green",
+  logicbox: "yellow",
   outputs: "#AA2411",
   data: "#198BF6",
   prompts: "#4367BF",
@@ -383,6 +390,10 @@ export const nodeColorsName: { [char: string]: string } = {
   outputs: "red",
   data: "sky",
   prompts: "blue",
+  channels: "Channels",
+  experts: "Experts",
+  logicbox: "Logic Box",
+  datastore: "Data Store",
   models: "fuchsia",
   model_specs: "violet",
   chains: "orange",
@@ -525,6 +536,16 @@ export const nodeIconsLucide: iconsType = {
   ListFlows: Group,
   ClearMessageHistory: FileClock,
   Python: PythonIcon,
+  ChatOutput: MessagesSquare,
+  BotMessageSquareIcon,
+  ChatInput: MessagesSquare,
+  inputs: Download,
+  channels: MetaIcon,
+  experts: FaPeopleRoof,
+  datastore: DatabaseZap,
+  logicbox: Split,
+  outputs: Upload,
+  data: Database,
   AzureChatOpenAi: AzureIcon,
   Ollama: OllamaIcon,
   ChatOllama: OllamaIcon,

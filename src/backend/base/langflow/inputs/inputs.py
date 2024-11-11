@@ -67,8 +67,13 @@ class HandleInput(BaseInputMixin, ListableInputMixin, MetadataTraceMixin):
     field_type: SerializableFieldTypes = FieldTypes.OTHER
 
 
-class DataInput(HandleInput, InputTraceMixin, ListableInputMixin, ToolModeMixin):
-    """Represents an Input that has a Handle that receives a Data object.
+class StateInput(HandleInput):
+    input_types: list[str] = ["State"]
+
+
+class DataInput(HandleInput, InputTraceMixin, ListableInputMixin):
+    """
+    Represents an Input that has a Handle that receives a Data object.
 
     Attributes:
         input_types (list[str]): A list of input types supported by this data input.
@@ -513,6 +518,7 @@ InputTypes = (
     | TableInput
     | LinkInput
     | SliderInput
+    | StateInput
 )
 
 InputTypesMap: dict[str, type[InputTypes]] = {t.__name__: t for t in get_args(InputTypes)}
