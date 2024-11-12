@@ -18,24 +18,19 @@ from langchain_ollama import ChatOllama
 
 
 
-class NERExpert(Component):
-    display_name = "NER Expert"
-    description = "Expert in fetching ner from given context"
-    icon = "dices"
-    name = "ner-expert"
-    llm = ChatOllama(model="llama3.2:3b-instruct-fp16", temperature=0.4, format='json')
+class ReAskExpert(Component):
+    display_name = "ReAsk NER Expert"
+    description = "Expert in asking question to collect information"
+    icon = "rectangle-ellipsis"
+    name = "reask-expert"
 
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        _llm = ChatOllama(model="llama3.2:3b-instruct-fp16", temperature=0.4, format='json')
-        _llm = _llm.with_config(tags=["instruct_response"])
         _llm_generate = ChatOllama(model="llama3.2:latest", temperature=0.3)
         _llm_generate = _llm_generate.with_config(tags=["airesponse"])
-        self.llm = _llm
         self.generation_llm = _llm_generate
-        self.extraction_system_instruction = "You are expert in information extraction from given question."
-        self.interact_system_instruction = "You are expert in followup question generation to collect asked information."
+        self.system_instruction = "You are expert to ask question for collection required information."
 
 
 
@@ -47,7 +42,7 @@ class NERExpert(Component):
             is_list=True
             
         ),
-        PromptInput(name="extract_prompt", display_name="Extract Prompt Instruction",
+        PromptInput(name="reask_prompt", display_name="ReAsk Prompt Instruction",
             value=(
                 "Extract the following 'entities' given their name and description: \n"
                 "'entities' from the asked question 'question'.\n\n"
@@ -58,19 +53,12 @@ class NERExpert(Component):
                 "Return the answer in format of JSON."
                 )
             ),
-        # PromptInput(name="interact_prompt", display_name="Interact Prompt Instruction",
-        # value=(
-        #     "Carefully observe the given 'entities' and form question for collection entities information (where entity name and their description given).\n"
-        #     "Here are given entities: \n"
-        #     "{entities}"
-        #     )
+        # DictInput(
+        #     name="ner_elements",
+        #     display_name="NER Elements",
+        #     info="NER entity name and their description",
+        #     is_list=True,
         # ),
-        DictInput(
-            name="ner_elements",
-            display_name="NER Elements",
-            info="NER entity name and their description",
-            is_list=True,
-        ),
         # HandleInput(
         #     name="ner_tools",
         #     display_name="Language Model",
@@ -81,7 +69,7 @@ class NERExpert(Component):
     outputs = [
         # Output(display_name="singluar_value", name="Singular Value", method="build_singular_output"),
         # Output(display_name="data_value", name="JSON Value", method="build_json_output"),
-        Output(display_name="Extarcted NER", name="extract-ner", method="dry_run"),
+        Output(display_name="Reask Results", name="reask-results", method="dry_run"),
     ]
 
 
@@ -109,20 +97,20 @@ class NERExpert(Component):
             if not v:
                 # TODO check here if mandatory and default stuff
                 not_found_entities[k] = v
-        # follow_up_question = ""
-        # if not_found_entities:
-        #     not_found_entities_str = "\n".join([f"{k} -> {v}" for k, v in not_found_entities.items()])
-        #     try:
-        #         response = await self.generation_llm.ainvoke(
-        #             [SystemMessage(content=self.interact_system_instruction)
-        #             ]+[HumanMessage(content=self.interact_prompt.format(entities=not_found_entities_str))])
-        #         print("Flag 2", response.content)
-        #         follow_up_question = response.content
-        #     except KeyError:
-        #         follow_up_question = ""
+        follow_up_question = ""
+        if not_found_entities:
+            not_found_entities_str = "\n".join([f"{k} -> {v}" for k, v in not_found_entities.items()])
+            try:
+                response = await self.generation_llm.ainvoke(
+                    [SystemMessage(content=self.interact_system_instruction)
+                    ]+[HumanMessage(content=self.interact_prompt.format(entities=not_found_entities_str))])
+                print("Flag 2", response.content)
+                follow_up_question = response.content
+            except KeyError:
+                follow_up_question = ""
 
 
-        return {"ner_results": {"entities": found_entities, 'not_found_entities': not_found_entities}}
+        return {"entities": found_entities, 'not_found_entities': not_found_entities, 'followup_question': follow_up_question}
     
     async def dry_run(self) -> State:
         # It's expected previous state will come from one source at a time
@@ -131,7 +119,7 @@ class NERExpert(Component):
         previous_state = [x for x in self.state if x][0].data
         state = {
             'question': previous_state['question'],
-            'ner_elements': self.ner_elements
+            'ner_results': previous_state['ner_results']
         }
         response = await self.extract(state)
         results = {**previous_state, **response}

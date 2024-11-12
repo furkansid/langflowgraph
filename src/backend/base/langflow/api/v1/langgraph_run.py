@@ -36,7 +36,6 @@ from langflow.api.v1.schemas import (
     VerticesOrderResponse,
 )
 from langflow.events.event_manager import EventManager, create_default_event_manager
-from langflow.exceptions.component import ComponentBuildException
 from langflow.graph.graph.base import Graph
 from langflow.graph.utils import log_vertex_build
 from langflow.schema.schema import OutputValue
@@ -104,6 +103,7 @@ class GraphState(TypedDict):
     # Possible dynamic hold variable with the help typeddict i.e
     # this internal variables + flow defined GraphState variables.
     flow_variables: dict
+    ner_elements: dict
 
 class LangGraphRunner():
 

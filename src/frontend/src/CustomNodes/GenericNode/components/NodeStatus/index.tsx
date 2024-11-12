@@ -281,6 +281,7 @@ export default function NodeStatus({
                 <div data-testid={`button_run_` + display_name.toLowerCase()}>
                   <IconComponent
                     name={iconName}
+                    iconColor="cyan"
                     className={iconClasses}
                     strokeWidth={ICON_STROKE_WIDTH}
                   />

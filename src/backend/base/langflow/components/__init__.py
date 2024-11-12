@@ -20,12 +20,12 @@
 from . import (
     experts,
     channels,
-    agents,
+    # agents,
     chains,
     custom_component,
     documentloaders,
-    embeddings,
-    helpers,
+    # embeddings,
+    # helpers,
     inputs,
     datastore,
     logicbox
@@ -59,7 +59,7 @@ __all__ = [
     "agents",
     "chains",
     "documentloaders",
-    "embeddings",
+    # "embeddings",
     "helpers",
     "inputs",
     "link_extractors",
@@ -75,4 +75,5 @@ __all__ = [
     "toolkits",
     "tools",
     "vectorstores",
+    "logicbox"
 ]

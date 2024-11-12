@@ -20,6 +20,10 @@ if TYPE_CHECKING:
     from langflow.graph.vertex.base import Vertex
 
 
+async def instantiate_class_fixed_logic(code):
+    class_object = eval_custom_component_code(code)
+    return class_object
+
 def instantiate_class(
     vertex: Vertex,
     user_id=None,

@@ -38,7 +38,6 @@ export const ForwardedIconComponent = memo(
           TargetIcon = nodeIconsLucide["unknown"];
         } else TargetIcon = lazy(dynamicIconImports[name]);
       }
-
       const style = {
         strokeWidth: strokeWidth ?? 1.5,
         ...(stroke && { stroke: stroke }),

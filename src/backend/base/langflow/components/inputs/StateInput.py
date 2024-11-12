@@ -29,7 +29,7 @@ class GraphStateInput(TextComponent):
     ]
 
     def inputs_to_state(self) -> State:
-        initial_data = {'question': self.question, **self.key_value}
+        initial_data = {'question': self.question, 'flow_variables': self.key_value}
         initial_state = State(data=initial_data)
         return initial_state
     
